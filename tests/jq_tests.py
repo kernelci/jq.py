@@ -2,8 +2,9 @@
 
 from __future__ import unicode_literals
 
+import io
 import jq
-from .tools import assert_equal, assert_is
+from .tools import assert_equal, assert_is, assert_raises
 
 
 def test_output_of_dot_operator_is_input():
@@ -191,6 +192,64 @@ def test_program_string_can_be_retrieved_from_program():
     program = jq.compile(".")
     assert_equal(".", program.program_string)
 
+def test_parse_json_both_text_and_text_iter_accepted():
+    assert_equal(True, next(jq.parse_json(text="true")))
+    assert_equal(True, next(jq.parse_json(text_iter=iter(["true"]))))
+
+def test_parse_json_file_works():
+    fp = io.StringIO('{"abc": "def"}')
+    assert_equal([dict(abc="def")], list(jq.parse_json_file(fp)))
+
+def test_parse_json_empty_text_iter_stops():
+    assert_raises(StopIteration, next, jq.parse_json(text_iter=iter([])))
+    assert_raises(StopIteration, next, jq.parse_json(text_iter=iter([""])))
+    assert_raises(StopIteration, next, jq.parse_json(text_iter=iter(["", ""])))
+
+def test_parse_json_single_complete_text_iter_works():
+    assert_equal(False, next(jq.parse_json(text_iter=iter(["false"]))))
+    assert_equal(True, next(jq.parse_json(text_iter=iter(["true"]))))
+    assert_equal(42, next(jq.parse_json(text_iter=iter(["42"]))))
+    assert_equal(-42, next(jq.parse_json(text_iter=iter(["-42"]))))
+    assert_equal("42", next(jq.parse_json(text_iter=iter(['"42"']))))
+    assert_equal([42], next(jq.parse_json(text_iter=iter(["[42]"]))))
+    assert_equal(dict(a=42),
+                 next(jq.parse_json(text_iter=iter(['{"a": 42}']))))
+
+def test_parse_json_multi_complete_text_iter_works():
+    assert_equal(False, next(jq.parse_json(text_iter=iter(["fa", "lse"]))))
+    assert_equal(True, next(jq.parse_json(text_iter=iter(["tr", "ue"]))))
+    assert_equal(42, next(jq.parse_json(text_iter=iter(["4", "2"]))))
+    assert_equal(-42, next(jq.parse_json(text_iter=iter(["-4", "2"]))))
+    assert_equal("42", next(jq.parse_json(text_iter=iter(['"4', '2"']))))
+    assert_equal([42], next(jq.parse_json(text_iter=iter(["[4", "2]"]))))
+    assert_equal(dict(a=42),
+                 next(jq.parse_json(text_iter=iter(['{"a":', ' 42}']))))
+
+def test_parse_json_single_incomplete_text_iter_breaks():
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(["fals"])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(["tru"])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(["-"])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(['"42'])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(["[42"])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(['{"a": 42'])))
+
+def test_parse_json_multi_incomplete_text_iter_breaks():
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(["fa", "ls"])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(["tr", "u"])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(['"4', '2'])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(["[4", "2"])))
+    assert_raises(jq.JSONParseError, next,
+                  jq.parse_json(text_iter=iter(['{"a":', ' 42'])))
 
 class TestJvToPython(object):
     def test_program_preserves_null(self):
