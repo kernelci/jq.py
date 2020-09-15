@@ -192,9 +192,11 @@ def test_program_string_can_be_retrieved_from_program():
     program = jq.compile(".")
     assert_equal(".", program.program_string)
 
-def test_parse_json_both_text_and_text_iter_accepted():
+def test_parse_json_all_inputs_accepted():
     assert_equal(True, next(jq.parse_json(text="true")))
     assert_equal(True, next(jq.parse_json(text_iter=iter(["true"]))))
+    assert_equal(True, next(jq.parse_json(text=b"true")))
+    assert_equal(True, next(jq.parse_json(text_iter=iter([b"true"]))))
 
 def test_parse_json_file_works():
     fp = io.StringIO('{"abc": "def"}')
