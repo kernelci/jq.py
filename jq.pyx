@@ -47,6 +47,7 @@ cdef extern from "jv.h":
     int jv_object_iter_valid(jv, int)
     jv jv_object_iter_key(jv, int)
     jv jv_object_iter_value(jv, int)
+    jv jv_invalid()
 
     cdef struct jv_parser:
         pass
@@ -135,6 +136,127 @@ cdef int _is_integer(double value):
     cdef double fractional_part = modf(value, &integral_part)
 
     return fractional_part == 0
+
+
+class JSONParseError(Exception):
+    """A failure to parse JSON"""
+
+
+cdef class _JV(object):
+    """Native JSON value"""
+    cdef jv _value
+
+    def __dealloc__(self):
+        jv_free(self._value)
+
+    def __cinit__(self):
+        self._value = jv_invalid()
+
+    def unpack(self):
+        """
+        Unpack the JSON value into standard Python representation.
+
+        Returns:
+            An unpacked copy of the JSON value.
+        """
+        return _jv_to_python(jv_copy(self._value))
+
+
+cdef class _JSONParser(object):
+    cdef jv_parser* _parser
+    cdef object _text_iter
+    cdef object _bytes
+    cdef bint _packed
+    cdef jv _slurped
+
+    def __dealloc__(self):
+        jv_free(self._slurped)
+        jv_parser_free(self._parser)
+
+    def __cinit__(self, text_iter, *, bint packed, bint slurp, bint seq):
+        """
+        Initialize the parser.
+
+        Args:
+            text_iter:  An iterator producing pieces of the JSON stream text
+                        (strings or bytes) to parse.
+            packed:     Make the iterator return jq-native packed values,
+                        if true, and standard Python values, if false.
+            slurp:      Enable input slurping if true.
+            seq:        True to expect application/json-seq input.
+        """
+        self._parser = jv_parser_new(JV_PARSE_SEQ if seq else 0)
+        self._text_iter = text_iter
+        self._bytes = None
+        self._packed = packed
+        self._slurped = jv_array() if slurp else jv_invalid()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        """
+        Retrieve next parsed JSON value.
+
+        Returns:
+            The next parsed JSON value.
+
+        Raises:
+            JSONParseError: failed parsing the input JSON.
+            StopIteration: no more values available.
+        """
+        cdef jv value
+        while True:
+            # If the parser has no buffer set/left
+            if not jv_parser_remaining(self._parser):
+                # Supply it with some bytes
+                self._ready_next_bytes()
+            # Get next value from the parser
+            value = jv_parser_next(self._parser)
+            if jv_is_valid(value):
+                if jv_is_valid(self._slurped):
+                    self._slurped = jv_array_append(self._slurped, value)
+                else:
+                    break
+            elif jv_invalid_has_msg(jv_copy(value)):
+                error_message = jv_invalid_get_msg(value)
+                message = jv_string_to_py_string(error_message)
+                jv_free(error_message)
+                raise JSONParseError(message)
+            else:
+                jv_free(value)
+                # If we supplied no bytes last time
+                if self._bytes is None:
+                    if jv_is_valid(self._slurped):
+                        # Return completed slurped array
+                        value = self._slurped
+                        # Next call will raise StopIteration
+                        self._slurped = jv_invalid()
+                        break
+                    else:
+                        raise StopIteration
+        if self._packed:
+            packed = _JV()
+            packed._value = value
+            return packed
+        else:
+            return _jv_to_python(value)
+
+    cdef bint _ready_next_bytes(self) except 1:
+        cdef char* cbytes
+        cdef ssize_t clen
+        try:
+            text = next(self._text_iter)
+            if isinstance(text, bytes):
+                self._bytes = text
+            else:
+                self._bytes = text.encode("utf8")
+            PyBytes_AsStringAndSize(self._bytes, &cbytes, &clen)
+            jv_parser_set_buf(self._parser, cbytes, clen, 1)
+        except StopIteration:
+            self._bytes = None
+            jv_parser_set_buf(self._parser, "", 0, 0)
+        return 0
 
 
 def compile(object program, args=None):
@@ -437,6 +559,57 @@ def iter(program, value=_NO_VALUE, text=_NO_VALUE):
 
 def text(program, value=_NO_VALUE, text=_NO_VALUE):
     return compile(program).input(value, text=text).text()
+
+
+def parse_json(text=_NO_VALUE, text_iter=_NO_VALUE, *,
+               packed=False, slurp=False, seq=False):
+    """
+    Parse a JSON stream.
+    Either "text" or "text_iter" must be specified.
+
+    Args:
+        text:       A string or bytes object containing the JSON stream to
+                    parse.
+        text_iter:  An iterator returning strings or bytes - pieces of the
+                    JSON stream to parse.
+        packed:     If true, return packed, jq-native JSON values.
+                    If false, return standard Python JSON values.
+        slurp:      True to enable input slurping.
+        seq:        True to expect application/json-seq input.
+
+    Returns:
+        An iterator returning parsed values.
+
+    Raises:
+        JSONParseError: failed parsing the input JSON stream.
+    """
+    if (text is _NO_VALUE) == (text_iter is _NO_VALUE):
+        raise ValueError("Either the text or text_iter argument should be set")
+    return _JSONParser(text_iter
+                       if text_iter is not _NO_VALUE
+                       else _iter((text,)),
+                       packed=packed,
+                       slurp=slurp,
+                       seq=seq)
+
+
+def parse_json_file(fp, *, packed=False, slurp=False):
+    """
+    Parse a JSON stream file.
+
+    Args:
+        fp: The file-like object to read the JSON stream from.
+        packed: If true, return packed, jq-native JSON values.
+                If false, return standard Python JSON values.
+        slurp:  True to enable input slurping.
+
+    Returns:
+        An iterator returning parsed values.
+
+    Raises:
+        JSONParseError: failed parsing the JSON stream.
+    """
+    return parse_json(text=fp.read(), packed=packed, slurp=slurp)
 
 
 # Support the 0.1.x API for backwards compatibility
