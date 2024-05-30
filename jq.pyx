@@ -438,8 +438,11 @@ cdef class _ProgramWithInput(object):
         return self._make_iterator()
 
     cdef _ResultIterator _make_iterator(self):
-        return _ResultIterator(self._jq_state_pool, self._bytes_input,
-                               slurp=self._slurp, seq=self._seq)
+        return _ResultIterator(self._jq_state_pool,
+                               parse_json(text=self._bytes_input,
+                                          packed=True,
+                                          slurp=self._slurp,
+                                          seq=self._seq))
 
     def text(self):
         # Performance testing suggests that using _jv_to_python (within the
@@ -461,28 +464,17 @@ cdef class _ProgramWithInput(object):
 cdef class _ResultIterator(object):
     cdef _JqStatePool _jq_state_pool
     cdef jq_state* _jq
-    cdef jv_parser* _parser
-    cdef bytes _bytes_input
-    cdef bint _slurp
+    cdef _JSONParser _parser_input
     cdef bint _ready
 
     def __dealloc__(self):
         self._jq_state_pool.release(self._jq)
-        jv_parser_free(self._parser)
 
-    def __cinit__(self, _JqStatePool jq_state_pool, bytes bytes_input, *,
-                  bint slurp, bint seq):
+    def __cinit__(self, _JqStatePool jq_state_pool, _JSONParser parser_input):
         self._jq_state_pool = jq_state_pool
         self._jq = jq_state_pool.acquire()
-        self._bytes_input = bytes_input
-        self._slurp = slurp
         self._ready = False
-        cdef jv_parser* parser = jv_parser_new(JV_PARSE_SEQ if seq else 0)
-        cdef char* cbytes_input
-        cdef ssize_t clen_input
-        PyBytes_AsStringAndSize(bytes_input, &cbytes_input, &clen_input)
-        jv_parser_set_buf(parser, cbytes_input, clen_input, 0)
-        self._parser = parser
+        self._parser_input = parser_input
 
     def __iter__(self):
         return self
@@ -507,39 +499,10 @@ cdef class _ResultIterator(object):
 
     cdef bint _ready_next_input(self) except 1:
         cdef int jq_flags = 0
-        cdef jv value
-
-        if self._slurp:
-            value = jv_array()
-
-            while True:
-                try:
-                    next_value = self._parse_next_input()
-                    value = jv_array_append(value, next_value)
-                except StopIteration:
-                    self._slurp = False
-                    break
-        else:
-            value = self._parse_next_input()
-
-        jq_start(self._jq, value, jq_flags)
+        cdef _JV packed = next(self._parser_input)
+        jq_start(self._jq, packed._value, jq_flags)
+        packed._value = jv_invalid()
         return 0
-
-    cdef inline jv _parse_next_input(self) except *:
-        cdef jv value
-        while True:
-            value = jv_parser_next(self._parser)
-            if jv_is_valid(value):
-                return value
-            elif jv_invalid_has_msg(jv_copy(value)):
-                error_message = jv_invalid_get_msg(value)
-                message = jv_string_to_py_string(error_message)
-                jv_free(error_message)
-                raise ValueError(u"parse error: " + message)
-            else:
-                if not jv_parser_remaining(self._parser):
-                    jv_free(value)
-                    raise StopIteration()
 
 
 def all(program, value=_NO_VALUE, text=_NO_VALUE):

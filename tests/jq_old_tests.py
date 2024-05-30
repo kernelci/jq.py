@@ -2,7 +2,7 @@
 
 from __future__ import unicode_literals
 
-from jq import jq
+from jq import jq, JSONParseError
 from .tools import assert_equal
 
 
@@ -104,13 +104,13 @@ def test_errors_do_not_leak_between_transformations():
     assert_equal(1, program.transform({"x": 1}))
 
 
-def test_value_error_is_raised_if_input_is_not_valid_json():
+def test_json_parse_error_is_raised_if_input_is_not_valid_json():
     program = jq(".x")
     try:
         program.transform(text="!!")
         assert False, "Expected error"
-    except ValueError as error:
-        expected_error_str = "parse error: Invalid numeric literal at EOF at line 1, column 2"
+    except JSONParseError as error:
+        expected_error_str = "Invalid numeric literal at EOF at line 1, column 2"
         assert_equal(str(error), expected_error_str)
 
 

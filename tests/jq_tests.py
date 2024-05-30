@@ -230,8 +230,8 @@ def test_value_error_is_raised_if_input_is_not_valid_json():
     try:
         program.input(text="!!").first()
         assert False, "Expected error"
-    except ValueError as error:
-        expected_error_str = "parse error: Invalid numeric literal at EOF at line 1, column 2"
+    except jq.JSONParseError as error:
+        expected_error_str = "Invalid numeric literal at EOF at line 1, column 2"
         assert_equal(str(error), expected_error_str)
 
 
@@ -452,9 +452,9 @@ class TestJvToPython(object):
             result = program.input(text='"a\x00b"').first()
 
             assert_equal("a\x00b", result)
-        except ValueError as error:
+        except jq.JSONParseError as error:
             assert_equal(
-                "parse error: Invalid string: control characters from U+0000 " +
+                "Invalid string: control characters from U+0000 " +
                 "through U+001F must be escaped at line 1, column 5",
                 str(error),
             )
