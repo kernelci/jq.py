@@ -423,12 +423,22 @@ cdef class _Program(object):
 
 
 cdef class _ProgramWithInput(object):
+    """Input-supplied program"""
     cdef _JqStatePool _jq_state_pool
     cdef object _bytes_input
     cdef bint _slurp
     cdef bint _seq
 
     def __cinit__(self, jq_state_pool, bytes_input, *, bint slurp, bint seq):
+        """
+        Initialize the input-supplied program.
+
+        Args:
+            jq_state_pool:  The JQ state pool to acquire program state from.
+            bytes_input:    The bytes containing input JSON.
+            slurp:          True to enable input slurping.
+            seq:            True to expect application/json-seq input.
+        """
         self._jq_state_pool = jq_state_pool
         self._bytes_input = bytes_input
         self._slurp = slurp
@@ -462,6 +472,7 @@ cdef class _ProgramWithInput(object):
 
 
 cdef class _ResultIterator(object):
+    """Program result iterator"""
     cdef _JqStatePool _jq_state_pool
     cdef jq_state* _jq
     cdef _JSONParser _parser_input
@@ -471,6 +482,13 @@ cdef class _ResultIterator(object):
         self._jq_state_pool.release(self._jq)
 
     def __cinit__(self, _JqStatePool jq_state_pool, _JSONParser parser_input):
+        """
+        Initialize the result iterator.
+
+        Args:
+            jq_state_pool:  The JQ state pool to acquire program state from.
+            parser_input:   The parser to receive packed input values from.
+        """
         self._jq_state_pool = jq_state_pool
         self._jq = jq_state_pool.acquire()
         self._ready = False
